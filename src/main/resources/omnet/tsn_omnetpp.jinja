@@ -1,0 +1,43 @@
+[General]
+network = DNCTSNNetwork
+
+# Time to add the sources
+{% for id, source in sources.items() %}
+# {{id}} sources
+*.{{id}}.numApps = {{source|length}}
+
+# Create the applications that the sink runs
+{% for src in source %}
+{% set i = loop.index0 %}
+*.{{id}}.app[{{i}}].typename = {{src.type}}
+*.{{id}}.app[{{i}}].source.packetNameFormat = "%M->{{src.name}}-%c"
+*.{{id}}.app[{{i}}].messageLength = {{src.length}}B
+*.{{id}}.app[{{i}}].sendInterval = {{src.interval}}us
+*.{{id}}.app[{{i}}].localPort = 2000
+*.{{id}}.app[{{i}}].destAddresses = "{{src.dst.address}}"
+*.{{id}}.app[{{i}}].destPort = {{src.dst.port}}
+*.{{id}}.app[{{i}}].burstDuration = 0s
+*.{{id}}.app[{{i}}].chooseDestAddrMode = "perBurst"
+*.{{id}}.app[{{i}}].sleepDuration = 0s
+*.{{id}}.app[{{i}}].stopTime = -1s
+*.{{id}}.app[{{i}}].delayLimit = 20s
+*.{{id}}.app[{{i}}].destAddrRNG = 0
+{% endfor %}
+
+{% endfor %}
+# Now lets add the sinks
+{% for id, apps in sinks.items() %}
+# {{id}} sinks
+*.{{id}}.numApps = {{apps|length}}
+
+# Create the applications that the sink runs
+{% for app in apps %}
+{% set i = loop.index0 %}
+*.{{id}}.app[{{i}}].typename = "{{app.type}}"
+*.{{id}}.app[{{i}}].display-name = "{{app.name}}"
+*.{{id}}.app[{{i}}].localPort = {{app.port}}
+{% endfor %}
+
+{% endfor %}
+# Set the default bitrate to 10Mbps so we can simulate faster
+**.eth[*].bitrate = 10Mbps

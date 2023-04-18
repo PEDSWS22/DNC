@@ -1,0 +1,17 @@
+import inet.node.ethernet.EthernetLink;
+import inet.networks.base.TsnNetworkBase;
+import inet.node.tsn.*;
+
+network DNCTSNNetwork extends TsnNetworkBase
+{
+    submodules:
+        // This starts with a list of devices
+{% for dev in devices %}
+        {{dev.identifier}}: {{dev.type}};
+{% endfor %}
+
+    connections:
+{% for con in connections %}
+        {{con.src}}.ethg++ <--> EthernetLink <--> {{con.dst}}.ethg++;
+{% endfor %}
+}

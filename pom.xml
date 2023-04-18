@@ -68,6 +68,11 @@
 			<version>[${apache.commons.version.from},${apache.commons.version.to}]</version>
 		</dependency>
 		<dependency>
+			<groupId>com.hubspot.jinjava</groupId>
+			<artifactId>jinjava</artifactId>
+			<version>2.7.0</version>
+		</dependency>
+		<dependency>
 			<groupId>org.networkcalculus.num</groupId>
     		<artifactId>NetCal-NumBackend</artifactId>
 			<version>${numbackend.version}</version>
@@ -81,6 +86,31 @@
 
 	<build>
 		<plugins>
+			<plugin>
+				<groupId>com.iluwatar.urm</groupId>
+				<artifactId>urm-maven-plugin</artifactId>
+				<version>2.1.1</version>
+				<configuration>
+					<outputDirectory>${project.basedir}/target</outputDirectory>
+					<packages>
+						<param>org.networkcalculus.dnc.network</param>
+					</packages>
+					<ignores>
+					</ignores>
+					<includeMainDirectory>true</includeMainDirectory>
+					<includeTestDirectory>false</includeTestDirectory>
+					<presenter>mermaid</presenter>
+				</configuration>
+				<executions>
+					<execution>
+						<phase>process-classes</phase>
+						<goals>
+							<goal>map</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+
 			<!-- run the unit tests -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

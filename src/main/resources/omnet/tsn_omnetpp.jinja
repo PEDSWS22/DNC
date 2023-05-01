@@ -7,8 +7,8 @@ network = DNCTSNNetwork
 *.visualizer.interfaceTableVisualizer.displayInterfaceTables = true
 *.visualizer.interfaceTableVisualizer.format = "%N %\\%a/%l%\\%m"
 
-# Set the default bitrate to 10Mbps so we can simulate faster
-**.eth[*].bitrate = 10Mbps
+# Set the default bitrate to 10Gbps so its large enough for the curves
+**.eth[*].bitrate = 10Gbps
 
 # Time to add the sources
 {% for id, source in sources.items() %}
@@ -29,6 +29,7 @@ network = DNCTSNNetwork
 *.{{id}}.app[{{i}}].measurementStarter.typename = "FlowMeasurementStarter"
 *.{{id}}.app[{{i}}].measurementStarter.flowName = "{{src.flowid}}"
 *.{{id}}.app[{{i}}].measurementStarter.measure = "elapsedTime"
+
 # A start flow cant be the end of another flow
 *.{{id}}.app[{{i}}].measurementLayer.measurementRecorder[*].typename = ""
 {% endfor %}
@@ -50,6 +51,7 @@ network = DNCTSNNetwork
 *.{{id}}.app[{{i}}].measurementRecorder.measure = "elapsedTime"
 *.{{id}}.app[{{i}}].measurementRecorder.flowName = "{{app.flowid}}"
 *.{{id}}.app[{{i}}].measurementRecorder.typename = "FlowMeasurementRecorder"
+
 # A end flow cant be the start of another flow
 *.{{id}}.app[{{i}}].measurementLayer.measurementStarter[*].typename = ""
 {% endfor %}

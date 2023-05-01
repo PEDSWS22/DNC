@@ -2,6 +2,7 @@ package org.networkcalculus.dnc.utils;
 
 import com.hubspot.jinjava.Jinjava;
 import com.hubspot.jinjava.JinjavaConfig;
+import org.networkcalculus.dnc.curves.ArrivalCurve;
 import org.networkcalculus.dnc.network.server_graph.Flow;
 import org.networkcalculus.dnc.network.server_graph.Server;
 import org.networkcalculus.dnc.network.server_graph.ServerGraph;
@@ -219,10 +220,6 @@ public class OmnetConverter {
                     getServerIdentifier(startServer)
             ));
 
-
-
-            // todo do the rest
-
             // The flow target
             String endFlowID = getFlowIdentifier(flow, false);
             Server endServer = servers.getLast();
@@ -237,23 +234,32 @@ public class OmnetConverter {
             // Create the src and sink
             String srcID = monitorFlowID+"Source";
             String sinkID = monitorFlowID+"Sink";
-            // Create a source application that sends data
-            // One flow sends one stream of packets so just grab a
-            int currentSinkPort = 1000;
-            int pLen = 1500 - 20 - 8; // 1500 bytes - ipv4 & udp overhead
 
+            ArrivalCurve arrivalCurve = flow.getArrivalCurve();
+            // Get the burst value (we assume bit), convert to byte and substract the "overhead"
+            int pLenBytes = (int) ((arrivalCurve.getBurst().doubleValue() / 8) + 0.5);
+            pLenBytes = pLenBytes - /* ipv4 */ 20 - /* udp */ 8;
+            if (pLenBytes <= 0) {
+                throw new RuntimeException("Burst bit value too small to factor in real udp packet overhead, fix your model");
+            }
+
+            // Grab the rate in bit/s from the arrival curve and round up
+            // fixme: Is this even the right "rate"?
+            int rate = (int) (arrivalCurve.getUltAffineRate().doubleValue() + 0.5);
+
+            // todo: If we had multiple sinks, we would need multiple ports
+            int currentSinkPort = 1000;
             OmnetSource src = new OmnetSource(
                     srcID,
                     new OmnetSourceDestination(endFlowID, currentSinkPort),
                     monitorFlowID,
-                    pLen,
-                    calculateProductionInterval(pLen, 10)
+                    pLenBytes,
+                    calculateProductionInterval(pLenBytes, rate)
             );
 
             List<OmnetSource> sourceList = sources.getOrDefault(startFlowID,  new LinkedList<>());
             sourceList.add(src);
             sources.put(startFlowID, sourceList);
-
 
             // Create a sink object that fits with the source
             OmnetUDPSink sink = new OmnetUDPSink(sinkID, monitorFlowID, currentSinkPort);
@@ -297,13 +303,15 @@ public class OmnetConverter {
         System.out.println(iniOutput);
     }
 
-    /*
-        This function calculates the required production interval for a given packet size that is needed to achieve a
-        target megabit per second value
+    /**
+     * Calculates the production interval in microseconds (us) needed to achieve a given
+     * average bandwidth (in bits per second) over a variable packet size.
+     *
+     * @param packetSizeBytes the average packet size in bytes
+     * @param bandwidthBps   the desired average bandwidth in bits per second
+     * @return the production interval in microseconds
      */
-    public static double calculateProductionInterval(int packetSize, int mbps) {
-        double packetsPerSecond =  mbps * 1000000.0 / packetSize * 8.0;
-        double productionInterval = 1.0 / packetsPerSecond;
-        return productionInterval * 1000000.0;
+    public static double calculateProductionInterval(double packetSizeBytes, double bandwidthBps) {
+        return (packetSizeBytes * 8) / (bandwidthBps / 1000000);
     }
 }

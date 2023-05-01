@@ -78,7 +78,7 @@ public class DemoOmnet {
         Turn t_7_8 = sg.addTurn(servers[7], servers[8]);
 
         // rate: 100.000, burst 10.000/8 = 1250
-        ArrivalCurve arrival_curve = Curve.getFactory().createTokenBucket(0.1e6, 0.1 * 0.1e6);
+        ArrivalCurve arrival_curve = Curve.getFactory().createTokenBucket(9e6, 0.1 * 0.1e6);
 
 
         LinkedList<Turn> path0 = new LinkedList<Turn>();

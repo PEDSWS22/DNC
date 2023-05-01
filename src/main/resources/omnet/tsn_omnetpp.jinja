@@ -20,7 +20,7 @@ network = DNCTSNNetwork
 {% set i = loop.index0 %}
 *.{{id}}.app[{{i}}].typename = {{src.type}}
 *.{{id}}.app[{{i}}].source.packetNameFormat = "%M->{{src.flowid}}-%c"
-*.{{id}}.app[{{i}}].source.packetLength = {{src.length}}B
+*.{{id}}.app[{{i}}].source.packetLength = {{src.length}}b
 *.{{id}}.app[{{i}}].source.productionInterval = {{src.interval}}us
 *.{{id}}.app[{{i}}].io.destAddress = "{{src.dst.address}}"
 *.{{id}}.app[{{i}}].io.destPort = {{src.dst.port}}
@@ -56,4 +56,14 @@ network = DNCTSNNetwork
 *.{{id}}.app[{{i}}].measurementLayer.measurementStarter[*].typename = ""
 {% endfor %}
 
+{% endfor %}
+
+# Create service rate limits
+{% for dev in devices %}
+{% if dev.servicerateLimit > 0.0 %}
+# Rate limit for {{dev.identifier}}
+*.{{dev.identifier}}.eth[*].macLayer.server.typename = "PacketServer"
+*.{{dev.identifier}}.eth[*].macLayer.server.processingBitrate = {{dev.servicerateLimit}} bps
+*.{{dev.identifier}}.eth[*].macLayer.server.processingTime = 0s
+{% endif %}
 {% endfor %}

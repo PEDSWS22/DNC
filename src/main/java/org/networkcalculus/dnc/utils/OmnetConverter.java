@@ -3,6 +3,7 @@ package org.networkcalculus.dnc.utils;
 import com.hubspot.jinjava.Jinjava;
 import com.hubspot.jinjava.JinjavaConfig;
 import org.networkcalculus.dnc.curves.ArrivalCurve;
+import org.networkcalculus.dnc.curves.ServiceCurve;
 import org.networkcalculus.dnc.network.server_graph.Flow;
 import org.networkcalculus.dnc.network.server_graph.Server;
 import org.networkcalculus.dnc.network.server_graph.ServerGraph;
@@ -46,9 +47,12 @@ class OmnetDevice {
     private String identifier;
     private SubmoduleTypes type;
 
-    OmnetDevice(String identifier, SubmoduleTypes type) {
+    private double servicerateLimit;
+
+    OmnetDevice(String identifier, SubmoduleTypes type, double serviceRateLimitBps) {
         this.identifier = identifier;
         this.type = type;
+        this.servicerateLimit = serviceRateLimitBps;
     }
 
     public SubmoduleTypes getType() {
@@ -57,6 +61,10 @@ class OmnetDevice {
 
     public String getIdentifier() {
         return identifier;
+    }
+
+    public double getServicerateLimit() {
+        return servicerateLimit;
     }
 }
 
@@ -192,7 +200,18 @@ public class OmnetConverter {
 
         for (final Server srv : sg.getServers() ) {
             // We register them as a switch for now because they transparently route packets
-            devices.add(new OmnetDevice(getServerIdentifier(srv), SubmoduleTypes.TSN_SWITCH));
+            if (srv.useMaxSC()) {
+                throw new RuntimeException("no idea how to support max service curves for now.");
+            }
+
+            // Obtain the service curve limit
+            ServiceCurve curve = srv.getServiceCurve();
+            int serviceRateLimitBps = 0;
+            if (curve != null) {
+                serviceRateLimitBps = (int) (curve.getUltAffineRate().doubleValue() + 0.5);
+            }
+
+            devices.add(new OmnetDevice(getServerIdentifier(srv), SubmoduleTypes.TSN_SWITCH, serviceRateLimitBps));
         }
 
         // todo we can get the physical "turns" but how do we do paths?
@@ -214,7 +233,7 @@ public class OmnetConverter {
             // The flow source
             String startFlowID = getFlowIdentifier(flow, true);
             Server startServer = servers.getFirst();
-            devices.add(new OmnetDevice(startFlowID, SubmoduleTypes.TSN_DEVICE));
+            devices.add(new OmnetDevice(startFlowID, SubmoduleTypes.TSN_DEVICE,0));
             connections.add(new OmnetConnection(
                     startFlowID,
                     getServerIdentifier(startServer)
@@ -223,7 +242,7 @@ public class OmnetConverter {
             // The flow target
             String endFlowID = getFlowIdentifier(flow, false);
             Server endServer = servers.getLast();
-            devices.add(new OmnetDevice(endFlowID, SubmoduleTypes.TSN_DEVICE));
+            devices.add(new OmnetDevice(endFlowID, SubmoduleTypes.TSN_DEVICE, 0));
             connections.add(new OmnetConnection(
                     endFlowID,
                     getServerIdentifier(endServer)
@@ -237,9 +256,9 @@ public class OmnetConverter {
 
             ArrivalCurve arrivalCurve = flow.getArrivalCurve();
             // Get the burst value (we assume bit), convert to byte and substract the "overhead"
-            int pLenBytes = (int) ((arrivalCurve.getBurst().doubleValue() / 8) + 0.5);
-            pLenBytes = pLenBytes - /* ipv4 */ 20 - /* udp */ 8;
-            if (pLenBytes <= 0) {
+            int pLenBit = (int) ((arrivalCurve.getBurst().doubleValue()) + 0.5);
+            pLenBit = pLenBit - /* ethernet */ 64*8 - /* ipv4 */ 20*8 - /* udp */ 8*8;
+            if (pLenBit <= 0) {
                 throw new RuntimeException("Burst bit value too small to factor in real udp packet overhead, fix your model");
             }
 
@@ -253,8 +272,8 @@ public class OmnetConverter {
                     srcID,
                     new OmnetSourceDestination(endFlowID, currentSinkPort),
                     monitorFlowID,
-                    pLenBytes,
-                    calculateProductionInterval(pLenBytes, rate)
+                    pLenBit,
+                    calculateProductionInterval(pLenBit, rate)
             );
 
             List<OmnetSource> sourceList = sources.getOrDefault(startFlowID,  new LinkedList<>());
@@ -305,13 +324,13 @@ public class OmnetConverter {
 
     /**
      * Calculates the production interval in microseconds (us) needed to achieve a given
-     * average bandwidth (in bits per second) over a variable packet size.
+     * bandwidth (in bits per second) over a variable packet size.
      *
-     * @param packetSizeBytes the average packet size in bytes
-     * @param bandwidthBps   the desired average bandwidth in bits per second
+     * @param packetSizeBit the packet size in bit
+     * @param bandwidthBps   the desired bandwidth in bits per second
      * @return the production interval in microseconds
      */
-    public static double calculateProductionInterval(double packetSizeBytes, double bandwidthBps) {
-        return (packetSizeBytes * 8) / (bandwidthBps / 1000000);
+    public static double calculateProductionInterval(double packetSizeBit, double bandwidthBps) {
+        return packetSizeBit / (bandwidthBps / 1000000);
     }
 }

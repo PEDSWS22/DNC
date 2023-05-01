@@ -1,30 +1,39 @@
 [General]
 network = DNCTSNNetwork
+# sim-time-limit = 1s
+
+# visualizer
+*.visualizer.packetFlowVisualizer.displayRoutes = true
+*.visualizer.interfaceTableVisualizer.displayInterfaceTables = true
+*.visualizer.interfaceTableVisualizer.format = "%N %\\%a/%l%\\%m"
+
+# Set the default bitrate to 10Mbps so we can simulate faster
+**.eth[*].bitrate = 10Mbps
 
 # Time to add the sources
 {% for id, source in sources.items() %}
 # {{id}} sources
 *.{{id}}.numApps = {{source|length}}
 
-# Create the applications that the sink runs
+# Create the flow start and ends that send the packets
 {% for src in source %}
 {% set i = loop.index0 %}
 *.{{id}}.app[{{i}}].typename = {{src.type}}
-*.{{id}}.app[{{i}}].source.packetNameFormat = "%M->{{src.name}}-%c"
-*.{{id}}.app[{{i}}].messageLength = {{src.length}}B
-*.{{id}}.app[{{i}}].sendInterval = {{src.interval}}us
-*.{{id}}.app[{{i}}].localPort = 2000
-*.{{id}}.app[{{i}}].destAddresses = "{{src.dst.address}}"
-*.{{id}}.app[{{i}}].destPort = {{src.dst.port}}
-*.{{id}}.app[{{i}}].burstDuration = 0s
-*.{{id}}.app[{{i}}].chooseDestAddrMode = "perBurst"
-*.{{id}}.app[{{i}}].sleepDuration = 0s
-*.{{id}}.app[{{i}}].stopTime = -1s
-*.{{id}}.app[{{i}}].delayLimit = 20s
-*.{{id}}.app[{{i}}].destAddrRNG = 0
+*.{{id}}.app[{{i}}].source.packetNameFormat = "%M->{{src.flowid}}-%c"
+*.{{id}}.app[{{i}}].source.packetLength = {{src.length}}B
+*.{{id}}.app[{{i}}].source.productionInterval = {{src.interval}}us
+*.{{id}}.app[{{i}}].io.destAddress = "{{src.dst.address}}"
+*.{{id}}.app[{{i}}].io.destPort = {{src.dst.port}}
+
+# Create flow start monitoring
+*.{{id}}.app[{{i}}].measurementStarter.typename = "FlowMeasurementStarter"
+*.{{id}}.app[{{i}}].measurementStarter.flowName = "{{src.flowid}}"
+*.{{id}}.app[{{i}}].measurementStarter.measure = "elapsedTime"
+# A start flow cant be the end of another flow
+*.{{id}}.app[{{i}}].measurementLayer.measurementRecorder[*].typename = ""
+{% endfor %}
 {% endfor %}
 
-{% endfor %}
 # Now lets add the sinks
 {% for id, apps in sinks.items() %}
 # {{id}} sinks
@@ -35,9 +44,14 @@ network = DNCTSNNetwork
 {% set i = loop.index0 %}
 *.{{id}}.app[{{i}}].typename = "{{app.type}}"
 *.{{id}}.app[{{i}}].display-name = "{{app.name}}"
-*.{{id}}.app[{{i}}].localPort = {{app.port}}
+*.{{id}}.app[{{i}}].io.localPort = {{app.port}}
+
+# Create flow target monitoring
+*.{{id}}.app[{{i}}].measurementRecorder.measure = "elapsedTime"
+*.{{id}}.app[{{i}}].measurementRecorder.flowName = "{{app.flowid}}"
+*.{{id}}.app[{{i}}].measurementRecorder.typename = "FlowMeasurementRecorder"
+# A end flow cant be the start of another flow
+*.{{id}}.app[{{i}}].measurementLayer.measurementStarter[*].typename = ""
 {% endfor %}
 
 {% endfor %}
-# Set the default bitrate to 10Mbps so we can simulate faster
-**.eth[*].bitrate = 10Mbps

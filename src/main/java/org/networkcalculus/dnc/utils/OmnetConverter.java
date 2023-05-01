@@ -60,7 +60,7 @@ class OmnetDevice {
 }
 
 enum SubmoduleTypes {
-    TSN_DEVICE("TsnDevice"),
+    TSN_DEVICE("TSNFlowMonitorDevice"),
     TSN_SWITCH("TsnSwitch")
     ;
 
@@ -80,8 +80,11 @@ class OmnetUDPSink {
     private String name;
     private int port;
 
-    OmnetUDPSink(String name, int port) {
+    private String flowid;
+
+    OmnetUDPSink(String name, String flowid, int port) {
         this.name = name;
+        this.flowid = flowid;
         this.port = port;
     }
 
@@ -93,9 +96,12 @@ class OmnetUDPSink {
         return port;
     }
 
-    // todo: support multiple types, burst, maybe?
     public String getType() {
-        return "UdpSink";
+        return "UdpSinkApp";
+    }
+
+    public String getFlowid() {
+        return flowid;
     }
 }
 
@@ -125,9 +131,12 @@ class OmnetSource {
     private String name;
     private OmnetSourceDestination dest;
 
-    OmnetSource(String name, OmnetSourceDestination dest, long pLenB, double pIntervalUs) {
+    private String flowid;
+
+    OmnetSource(String name, OmnetSourceDestination dest, String flowid, long pLenB, double pIntervalUs) {
         this.name = name;
         this.dest = dest;
+        this.flowid = flowid;
         this.pLen = pLenB;
         this.pInterval = pIntervalUs;
     }
@@ -140,9 +149,8 @@ class OmnetSource {
         return dest;
     }
 
-    // todo: support multiple types, burst, maybe?
     public String getType() {
-        return "UdpBasicBurst";
+        return "UdpSourceApp";
     }
 
     public double getInterval() {
@@ -151,6 +159,10 @@ class OmnetSource {
 
     public long getLength() {
         return pLen;
+    }
+
+    public String getFlowid() {
+        return flowid;
     }
 }
 
@@ -221,9 +233,10 @@ public class OmnetConverter {
             ));
 
 
+            String monitorFlowID = "f" + flow.getId();
             // Create the src and sink
-            String srcID = endFlowID+"Source";
-            String sinkID = endFlowID+"Sink";
+            String srcID = monitorFlowID+"Source";
+            String sinkID = monitorFlowID+"Sink";
             // Create a source application that sends data
             // One flow sends one stream of packets so just grab a
             int currentSinkPort = 1000;
@@ -232,11 +245,10 @@ public class OmnetConverter {
             OmnetSource src = new OmnetSource(
                     srcID,
                     new OmnetSourceDestination(endFlowID, currentSinkPort),
+                    monitorFlowID,
                     pLen,
                     calculateProductionInterval(pLen, 10)
             );
-
-
 
             List<OmnetSource> sourceList = sources.getOrDefault(startFlowID,  new LinkedList<>());
             sourceList.add(src);
@@ -244,7 +256,7 @@ public class OmnetConverter {
 
 
             // Create a sink object that fits with the source
-            OmnetUDPSink sink = new OmnetUDPSink(sinkID, currentSinkPort);
+            OmnetUDPSink sink = new OmnetUDPSink(sinkID, monitorFlowID, currentSinkPort);
             List<OmnetUDPSink> appList = sinks.getOrDefault(endFlowID,  new LinkedList<>());
             appList.add(sink);
             sinks.put(endFlowID, appList);

@@ -1,6 +1,7 @@
 import inet.node.ethernet.EthernetLink;
 import inet.networks.base.TsnNetworkBase;
 import inet.node.tsn.*;
+import inet.protocolelement.measurement.MultiMeasurementLayer;
 
 network DNCTSNNetwork extends TsnNetworkBase
 {
@@ -14,4 +15,18 @@ network DNCTSNNetwork extends TsnNetworkBase
 {% for con in connections %}
         {{con.src}}.ethg++ <--> EthernetLink <--> {{con.dst}}.ethg++;
 {% endfor %}
+}
+
+// Custom definitions for Measurement Layer support in TSN
+module TSNFlowMonitorDevice extends TsnDevice
+{
+    submodules:
+        measurementLayer: MultiMeasurementLayer {
+            @display("p=454,279");
+        }
+    connections:
+        udp.ipOut --> { @reconnect; } --> measurementLayer.upperLayerIn if hasUdp;
+        measurementLayer.lowerLayerOut --> { @reconnect; } --> tn.in[0] if hasUdp;
+        udp.ipIn <-- { @reconnect; } <-- measurementLayer.upperLayerOut if hasUdp;
+        measurementLayer.lowerLayerIn <-- { @reconnect; } <-- tn.out[0] if hasUdp;
 }

@@ -1,8 +1,10 @@
 [General]
 network = DNCTSNNetwork
-# sim-time-limit = 1s
 
-# visualizer
+# Run the simulation for a fixed amount of time
+sim-time-limit = {{max_time_s}}s
+
+# visualizer settings (for debugging purposes)
 *.visualizer.packetFlowVisualizer.displayRoutes = true
 *.visualizer.interfaceTableVisualizer.displayInterfaceTables = true
 *.visualizer.interfaceTableVisualizer.format = "%N %\\%a/%l%\\%m"

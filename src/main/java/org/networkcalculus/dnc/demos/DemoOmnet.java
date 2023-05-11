@@ -33,7 +33,7 @@ import org.networkcalculus.dnc.curves.ServiceCurve;
 import org.networkcalculus.dnc.network.server_graph.Server;
 import org.networkcalculus.dnc.network.server_graph.ServerGraph;
 import org.networkcalculus.dnc.network.server_graph.Turn;
-import org.networkcalculus.dnc.utils.OmnetConverter;
+import org.networkcalculus.dnc.omnet.OmnetConverter;
 
 import java.util.LinkedList;
 
@@ -104,7 +104,7 @@ public class DemoOmnet {
 
 
         // Test conversion
-        OmnetConverter.convert(sg);
-        throw new Exception("finished");
+        OmnetConverter omc = new OmnetConverter();
+        omc.convert(sg);
     }
 }

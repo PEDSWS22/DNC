@@ -26,15 +26,17 @@
 
 package org.networkcalculus.dnc.demos;
 
+import org.networkcalculus.dnc.CompFFApresets;
 import org.networkcalculus.dnc.curves.ArrivalCurve;
 import org.networkcalculus.dnc.curves.Curve;
 import org.networkcalculus.dnc.curves.MaxServiceCurve;
 import org.networkcalculus.dnc.curves.ServiceCurve;
+import org.networkcalculus.dnc.network.server_graph.Flow;
 import org.networkcalculus.dnc.network.server_graph.Server;
 import org.networkcalculus.dnc.network.server_graph.ServerGraph;
 import org.networkcalculus.dnc.network.server_graph.Turn;
 import org.networkcalculus.dnc.omnet.OmnetConverter;
-
+import org.networkcalculus.dnc.tandem.analyses.PmooAnalysis;
 import java.util.LinkedList;
 
 public class DemoOmnet {
@@ -53,7 +55,7 @@ public class DemoOmnet {
     }
 
     public void run() throws Exception {
-        ServiceCurve service_curve = Curve.getFactory().createRateLatency(10.0e6, 0.01);
+        ServiceCurve service_curve = Curve.getFactory().createRateLatency(10.0e6, 0.001);
         MaxServiceCurve max_service_curve = Curve.getFactory().createRateLatencyMSC(100.0e6, 0.001);
 
         ServerGraph sg = new ServerGraph();
@@ -78,7 +80,7 @@ public class DemoOmnet {
         Turn t_7_8 = sg.addTurn(servers[7], servers[8]);
 
         // rate: 100.000, burst 10.000/8 = 1250
-        ArrivalCurve arrival_curve = Curve.getFactory().createTokenBucket(9e6, 0.1 * 0.1e6);
+        ArrivalCurve arrival_curve = Curve.getFactory().createTokenBucket(0.1e6, 0.1 * 0.1e6);
 
 
         LinkedList<Turn> path0 = new LinkedList<Turn>();
@@ -92,19 +94,33 @@ public class DemoOmnet {
         path0.add(t_7_8);
 
 
-        sg.addFlow(arrival_curve, path0);
-
         LinkedList<Turn> path1 = new LinkedList<Turn>();
         path1.add(t_1_3);
         path1.add(t_3_4);
         path1.add(t_4_5);
         path1.add(t_5_6);
 
-        sg.addFlow(arrival_curve, path1);
 
+        Flow f0 = sg.addFlow(arrival_curve, path0);
+        Flow f1 = sg.addFlow(arrival_curve, path1);
 
         // Test conversion
-        OmnetConverter omc = new OmnetConverter();
-        omc.convert(sg);
+        OmnetConverter omc = new OmnetConverter("/home/martb/Dokumente/OMNET/DNC/inet4.5/");
+        omc.convert(sg, f0);
+
+        CompFFApresets compffa_analyses = new CompFFApresets( sg );
+        PmooAnalysis pmoo = compffa_analyses.pmoo_analysis;
+
+        // Analyze the server graph
+        // PMOO
+        System.out.println("--- PMOO Analysis ---");
+        try {
+            pmoo.performAnalysis(f0);
+            System.out.println("delay bound     : " + pmoo.getDelayBound());
+        } catch (Exception e) {
+            System.out.println("PMOO analysis failed");
+            e.printStackTrace();
+        }
+
     }
 }

@@ -4,6 +4,9 @@ network = DNCTSNNetwork
 # Run the simulation for a fixed amount of time
 sim-time-limit = {{max_time_s}}s
 
+# Change result output filename
+output-scalar-file = "data.sca"
+
 # visualizer settings (for debugging purposes)
 *.visualizer.packetFlowVisualizer.displayRoutes = true
 *.visualizer.interfaceTableVisualizer.displayInterfaceTables = true
@@ -27,13 +30,15 @@ sim-time-limit = {{max_time_s}}s
 *.{{id}}.app[{{i}}].io.destAddress = "{{src.dst.address}}"
 *.{{id}}.app[{{i}}].io.destPort = {{src.dst.port}}
 
+{% if src.withMeasurement %}
 # Create flow start monitoring
 *.{{id}}.app[{{i}}].measurementStarter.typename = "FlowMeasurementStarter"
 *.{{id}}.app[{{i}}].measurementStarter.flowName = "{{src.flowid}}"
 *.{{id}}.app[{{i}}].measurementStarter.measure = "elapsedTime"
+{% else %}
+*.{{id}}.app[{{i}}].measurementStarter.typename = ""
+{% endif %}
 
-# A start flow cant be the end of another flow
-*.{{id}}.app[{{i}}].measurementLayer.measurementRecorder[*].typename = ""
 {% endfor %}
 {% endfor %}
 
@@ -49,15 +54,15 @@ sim-time-limit = {{max_time_s}}s
 *.{{id}}.app[{{i}}].display-name = "{{app.name}}"
 *.{{id}}.app[{{i}}].io.localPort = {{app.port}}
 
+{% if app.withMeasurement %}
 # Create flow target monitoring
 *.{{id}}.app[{{i}}].measurementRecorder.measure = "elapsedTime"
 *.{{id}}.app[{{i}}].measurementRecorder.flowName = "{{app.flowid}}"
 *.{{id}}.app[{{i}}].measurementRecorder.typename = "FlowMeasurementRecorder"
-
-# A end flow cant be the start of another flow
-*.{{id}}.app[{{i}}].measurementLayer.measurementStarter[*].typename = ""
+{% else %}
+*.{{id}}.app[{{i}}].measurementRecorder.typename = ""
+{% endif %}
 {% endfor %}
-
 {% endfor %}
 
 # Create service rate limits

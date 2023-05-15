@@ -482,4 +482,45 @@ public class OmnetConverter {
     public static double calculateProductionInterval(double packetSizeBit, double bandwidthBps) {
         return packetSizeBit / (bandwidthBps / 1000000);
     }
+
+    public double getSimulationEndToEndDelay() {
+        String filePath = "";
+        File file = new File(filePath);
+
+        BufferedReader bufferedReader = null;
+        double endToEndDelay = -1;
+        try {
+            bufferedReader = new BufferedReader(new FileReader(file));
+            String line;
+
+            boolean found = false;
+            while (null != (line = bufferedReader.readLine())) {
+                String[] splitLine = line.split(" ");
+                if (splitLine[0].equals("statistic")) {
+                    String[] temp1 = splitLine[splitLine.length - 2].split("\\.");
+                    String[] temp2 = splitLine[splitLine.length - 1].split(":");
+                    if((temp1[temp1.length - 1].equals("measurementRecorder")) &&
+                            (temp2[0].equals("meanBitLifeTimePerPacket"))) {
+                        found = true;
+                    }
+                }
+                if (found && splitLine[0].equals("field") && splitLine[1].equals("mean")) {
+                     endToEndDelay = Double.parseDouble(splitLine[2]);
+                     break;
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        } finally {
+            if (null != bufferedReader) {
+                try {
+                    bufferedReader.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        return endToEndDelay;
+    }
 }

@@ -141,7 +141,7 @@ class OmnetSource {
     // The packet production in us
     private final double pInterval;
     // The packet length in bytes
-    private final long pLen;
+    private final long burstLength;
     private final String name;
     private final OmnetSourceDestination dest;
 
@@ -149,11 +149,11 @@ class OmnetSource {
 
     private final boolean enableMeasurements;
 
-    OmnetSource(String name, OmnetSourceDestination dest, String flowid, long pLenB, double pIntervalUs, boolean withMeasurement) {
+    OmnetSource(String name, OmnetSourceDestination dest, String flowid, long burstLength, double pIntervalUs, boolean withMeasurement) {
         this.name = name;
         this.dest = dest;
         this.flowid = flowid;
-        this.pLen = pLenB;
+        this.burstLength = burstLength;
         this.pInterval = pIntervalUs;
         this.enableMeasurements = withMeasurement;
     }
@@ -174,8 +174,12 @@ class OmnetSource {
         return pInterval;
     }
 
-    public long getLength() {
-        return pLen;
+    public long getPacketLength() {
+        return OmnetConverter.MAX_UDP_MSG_SIZE;
+    }
+
+    public long getBurstLength() {
+        return burstLength;
     }
 
     public String getFlowid() {
@@ -195,13 +199,18 @@ class OmnetSource {
  * (2) A valid path to the compiled version of the inet framework
  */
 public class OmnetConverter {
+    public static final long MAX_MTU_BYTES = 1500;
+    public static long MAX_UDP_MSG_SIZE = accountForUDPOverhead(MAX_MTU_BYTES);
+
     // Default settings
-    private static final Integer DEFAULT_SIMULATION_TIME_LIMIT = 60;
+    private static final long DEFAULT_SIMULATION_TIME_LIMIT = 5;
     // Constants
     public static final String SIMULATION_BINARY_NAME = "simulation";
     public static final String SIMULATION_TEMP_FOLDER = "temp";
     public static final String SIMULATION_NAME_PREFIX = "omnet-";
     public static final String SCALAR_RESULT_FILE = "data.sca";
+
+
 
     /**
      * The JinJava templating engine instance
@@ -408,6 +417,7 @@ public class OmnetConverter {
         }
 
         // todo we can get the physical "turns" but how do we do paths?
+        // fixme: routing is not implemented
         for (Turn turn : sg.getTurns()) {
             connections.add(
                     // Create a new omnet connection object
@@ -417,10 +427,6 @@ public class OmnetConverter {
                     )
             );
         }
-
-        // Flow of interest
-        // start = flowOfInterest.getSource(); OmnetSource
-        // ende = flowOfInterest. OmnetUDPSink
 
         // Grab the flows and add them as TSN_DEVICE
         for (Flow flow : sg.getFlows()) {
@@ -454,25 +460,21 @@ public class OmnetConverter {
             String sinkID = monitorFlowID+"Sink";
 
             ArrivalCurve arrivalCurve = flow.getArrivalCurve();
-            // Get the burst value (we assume bit), convert to byte and substract the "overhead"
-            int pLenBit = (int) ((arrivalCurve.getBurst().doubleValue()) + 0.5);
-            pLenBit = pLenBit - /* ethernet */ 64*8 - /* ipv4 */ 20*8 - /* udp */ 8*8;
-            if (pLenBit <= 0) {
-                throw new RuntimeException("Burst bit value too small to factor in real udp packet overhead, fix your model");
-            }
 
-            // Grab the rate in bit/s from the arrival curve and round up
-            // fixme: Is this even the right "rate"?
-            int rate = (int) (arrivalCurve.getUltAffineRate().doubleValue() + 0.5);
-
-            // todo: If we had multiple sinks, we would need multiple ports
             int currentSinkPort = 1000;
             OmnetSource src = new OmnetSource(
                     srcID,
                     new OmnetSourceDestination(endFlowID, currentSinkPort),
                     monitorFlowID,
-                    pLenBit,
-                    calculateProductionInterval(pLenBit, rate),
+
+                    // Get the burst value (we assume bit), convert to byte and substract the "overhead"
+                    getUDPBurstValueFromRaw(arrivalCurve.getBurst().doubleValue()),
+
+                    // Grab the rate in bit/s from the arrival curve and round up
+                    calculateProductionInterval(
+                            MAX_UDP_MSG_SIZE,
+                            (int) (arrivalCurve.getUltAffineRate().doubleValue() + 0.5)
+                    ),
                     isFoi
             );
 
@@ -506,7 +508,7 @@ public class OmnetConverter {
         ctx.put("sources", sources);
 
         // todo: allow changing the max simulation time in seconds
-        ctx.put("max_time_s", 60);
+        ctx.put("max_time_s", DEFAULT_SIMULATION_TIME_LIMIT);
 
         // Create a temporary todo: (permanent heh) output folder
         String uniqueID = String.valueOf(sg.hashCode());
@@ -537,8 +539,10 @@ public class OmnetConverter {
         compileSimulation(temporaryFolder);
         runSimulation(temporaryFolder);
 
-        double e2e = ScaExtractor.getSimulationEndToEndDelay(Paths.get(temporaryFolder.getPath(), "data.sca"));
+        double e2e = ScaExtractor.getSimulationEndToEndDelay(Paths.get(temporaryFolder.getPath(), SCALAR_RESULT_FILE));
         System.out.println("Simulation completed, e2e: " + e2e);
+
+        // todo: Save csv sc, ac, delay params
     }
 
     /**
@@ -558,11 +562,28 @@ public class OmnetConverter {
      * Calculates the production interval in microseconds (us) needed to achieve a given
      * bandwidth (in bits per second) over a variable packet size.
      *
-     * @param packetSizeBit the packet size in bit
+     * @param packetSizeBytes the packet size in bytes
      * @param bandwidthBps   the desired bandwidth in bits per second
      * @return the production interval in microseconds
      */
-    public static double calculateProductionInterval(double packetSizeBit, double bandwidthBps) {
-        return packetSizeBit / (bandwidthBps / 1000000);
+    public static double calculateProductionInterval(double packetSizeBytes, double bandwidthBps) {
+        return packetSizeBytes * 8 / (bandwidthBps / 1e6);
+    }
+
+    public static long getUDPBurstValueFromRaw(double frameSizeBit) {
+        // We assume the original intention was to send a burst of traffic with a maximum MTU of 1500
+        // (0) we find out how many frames that would have been.
+        return (long)Math.ceil(((frameSizeBit / 8) / MAX_MTU_BYTES) * MAX_UDP_MSG_SIZE);
+    }
+
+    /**
+     * Accounts for the UDP (User Datagram Protocol) overhead in the given packet size.
+     * The function subtracts the size of IPv4 header (20 bytes) and UDP header (8 bytes) from the packet size in bits.
+     *
+     * @param pSizeByte The size of the packet in bytes.
+     * @return The adjusted packet size after accounting for UDP overhead.
+     */
+    public static long accountForUDPOverhead(long pSizeByte) {
+        return pSizeByte - /* ipv4 */ 20 - /* udp */ 8;
     }
 }

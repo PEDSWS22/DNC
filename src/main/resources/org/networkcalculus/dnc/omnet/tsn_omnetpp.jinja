@@ -18,14 +18,30 @@ output-scalar-file = "data.sca"
 # Time to add the sources
 {% for id, source in sources.items() %}
 # {{id}} sources
-*.{{id}}.numApps = {{source|length}}
+
+{% set appNum = source|length * 2 %}
+*.{{id}}.numApps = {{appNum}}
 
 # Create the flow start and ends that send the packets
 {% for src in source %}
 {% set i = loop.index0 %}
+
+# Add an app that produces an initial udp burst
+*.{{id}}.app[{{i}}].typename = UdpBasicApp
+*.{{id}}.app[{{i}}].messageLength = {{src.burstLength}}B
+# Start,stop and send interval are deliberately chosen to only send 1 message.
+*.{{id}}.app[{{i}}].startTime = 0s
+*.{{id}}.app[{{i}}].stopTime = 0s
+*.{{id}}.app[{{i}}].sendInterval = 0s
+*.{{id}}.app[{{i}}].destAddresses = "{{src.dst.address}}"
+*.{{id}}.app[{{i}}].destPort = {{src.dst.port}}
+*.{{id}}.app[{{i}}].measurementStarter.typename = ""
+
+# Add a secondary app that produces the continuous traffic
+{% set i = i + 1 %}
 *.{{id}}.app[{{i}}].typename = {{src.type}}
 *.{{id}}.app[{{i}}].source.packetNameFormat = "%M->{{src.flowid}}-%c"
-*.{{id}}.app[{{i}}].source.packetLength = {{src.length}}b
+*.{{id}}.app[{{i}}].source.packetLength = {{src.packetLength}}B
 *.{{id}}.app[{{i}}].source.productionInterval = {{src.interval}}us
 *.{{id}}.app[{{i}}].io.destAddress = "{{src.dst.address}}"
 *.{{id}}.app[{{i}}].io.destPort = {{src.dst.port}}

@@ -2,17 +2,20 @@ package org.networkcalculus.dnc.omnet;
 
 import com.hubspot.jinjava.Jinjava;
 import com.hubspot.jinjava.JinjavaConfig;
+import org.networkcalculus.dnc.CompFFApresets;
 import org.networkcalculus.dnc.curves.ArrivalCurve;
 import org.networkcalculus.dnc.curves.ServiceCurve;
 import org.networkcalculus.dnc.network.server_graph.Flow;
 import org.networkcalculus.dnc.network.server_graph.Server;
 import org.networkcalculus.dnc.network.server_graph.ServerGraph;
 import org.networkcalculus.dnc.network.server_graph.Turn;
+import org.networkcalculus.dnc.tandem.analyses.PmooAnalysis;
 
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.text.NumberFormat;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -270,27 +273,26 @@ public class OmnetConverter {
     }
 
     /**
-     * Creates a temporary folder for the simulation using the specified UUID.
+     * Creates a folder for the simulation using the specified UUID.
      *
-     * @param uuid The UUID to be used for creating the temporary folder.
-     * @return The created temporary folder as a {@link File} object, or null if an error occurred.
+     * @param uuid The UUID to be used for creating the folder.
+     * @throws IOException if the folders could not be created or if the target is an existing file
+     * @return The created folder as a {@link File} object
      */
-    public static File createTempFolder(String uuid) {
-        try {
-            Path folderPath = Paths.get(SIMULATION_TEMP_FOLDER, SIMULATION_NAME_PREFIX + uuid);
-            // Create a new folder
-            Files.createDirectories(folderPath);
+    public static File createSimulationFolder(String uuid) throws IOException {
+        Path folderPath = Paths.get(SIMULATION_TEMP_FOLDER, SIMULATION_NAME_PREFIX + uuid);
+        Files.createDirectories(folderPath);
 
-            File folder = folderPath.toFile();
-            // re-use existing folders
-            if (folder.exists() && folder.isDirectory()) {
-                return folder;
-            }
-        } catch (IOException ex) {
-            System.err.println(ex.getMessage());
+        // re-use existing folders
+        File folder = folderPath.toFile();
+        boolean preExisting = folder.exists();
+        if (preExisting && folder.isDirectory()) {
+            return folder;
+        } else if (preExisting) {
+            throw new IOException("could not create temp folder, a file with the same name exists");
+        } else {
+            throw new IOException("could not create temp folder, unknown error");
         }
-
-        return null;
     }
 
     /**
@@ -391,103 +393,28 @@ public class OmnetConverter {
         return true;
     }
 
-    // todo wip: this is a prototype of the conversion function, code will be split into methods later on
-    public void convert(final ServerGraph sg, final Flow flowOfInterest) throws Exception {
-        // The lists we make available in jinja2 later
+    /**
+     * Simulates the network based on the given server graph and flow of interest.
+     *
+     * @param sg              The server graph.
+     * @param flowOfInterest  The flow of interest.
+     * @throws IOException    if the required templates are not found or the temp folder could not be created.
+     * @throws ScaExtractor.ValueNotFoundException if the result value is not found after the simulation.
+     */
+    public void simulate(final ServerGraph sg, final Flow flowOfInterest) throws IOException, ScaExtractor.ValueNotFoundException {
         List<OmnetDevice> devices = new LinkedList<>();
         List<OmnetConnection> connections = new LinkedList<>();
 
+        // First register our TSN Switches
+        registerSwitches(sg, devices);
+
+        // Create all the connections between the servers
+        createConnections(sg, connections);
+
+        // Add the required flows between the servers.
         Map<String, List<OmnetUDPSink>> sinks = new HashMap<>();
         Map<String, List<OmnetSource>> sources = new HashMap<>();
-
-        for (final Server srv : sg.getServers() ) {
-            // We register them as a switch for now because they transparently route packets
-            if (srv.useMaxSC()) {
-                throw new RuntimeException("no idea how to support max service curves for now.");
-            }
-
-            // Obtain the service curve limit
-            ServiceCurve curve = srv.getServiceCurve();
-            int serviceRateLimitBps = 0;
-            if (curve != null) {
-                serviceRateLimitBps = (int) (curve.getUltAffineRate().doubleValue() + 0.5);
-            }
-
-            devices.add(new OmnetDevice(getServerIdentifier(srv), SubmoduleTypes.TSN_SWITCH, serviceRateLimitBps));
-        }
-
-        // todo we can get the physical "turns" but how do we do paths?
-        // fixme: routing is not implemented
-        for (Turn turn : sg.getTurns()) {
-            connections.add(
-                    // Create a new omnet connection object
-                    new OmnetConnection(
-                            getServerIdentifier(turn.getSource()),
-                            getServerIdentifier(turn.getDest())
-                    )
-            );
-        }
-
-        // Grab the flows and add them as TSN_DEVICE
-        for (Flow flow : sg.getFlows()) {
-            // Check if the flow is our flow of interest
-            boolean isFoi = flow.equals(flowOfInterest);
-            
-            LinkedList<Server> servers = flow.getServersOnPath();
-
-            // The flow source
-            String startFlowID = getFlowIdentifier(flow, true);
-            Server startServer = servers.getFirst();
-            devices.add(new OmnetDevice(startFlowID, SubmoduleTypes.TSN_DEVICE,0));
-            connections.add(new OmnetConnection(
-                    startFlowID,
-                    getServerIdentifier(startServer)
-            ));
-
-            // The flow target
-            String endFlowID = getFlowIdentifier(flow, false);
-            Server endServer = servers.getLast();
-            devices.add(new OmnetDevice(endFlowID, SubmoduleTypes.TSN_DEVICE, 0));
-            connections.add(new OmnetConnection(
-                    endFlowID,
-                    getServerIdentifier(endServer)
-            ));
-
-
-            String monitorFlowID = "f" + flow.getId();
-            // Create the src and sink
-            String srcID = monitorFlowID+"Source";
-            String sinkID = monitorFlowID+"Sink";
-
-            ArrivalCurve arrivalCurve = flow.getArrivalCurve();
-
-            int currentSinkPort = 1000;
-            OmnetSource src = new OmnetSource(
-                    srcID,
-                    new OmnetSourceDestination(endFlowID, currentSinkPort),
-                    monitorFlowID,
-
-                    // Get the burst value (we assume bit), convert to byte and substract the "overhead"
-                    getUDPBurstValueFromRaw(arrivalCurve.getBurst().doubleValue()),
-
-                    // Grab the rate in bit/s from the arrival curve and round up
-                    calculateProductionInterval(
-                            MAX_UDP_MSG_SIZE,
-                            (int) (arrivalCurve.getUltAffineRate().doubleValue() + 0.5)
-                    ),
-                    isFoi
-            );
-
-            List<OmnetSource> sourceList = sources.getOrDefault(startFlowID,  new LinkedList<>());
-            sourceList.add(src);
-            sources.put(startFlowID, sourceList);
-
-            // Create a sink object that fits with the source
-            OmnetUDPSink sink = new OmnetUDPSink(sinkID, monitorFlowID, currentSinkPort, isFoi);
-            List<OmnetUDPSink> appList = sinks.getOrDefault(endFlowID,  new LinkedList<>());
-            appList.add(sink);
-            sinks.put(endFlowID, appList);
-        }
+        addFlows(sg, flowOfInterest, devices, connections, sinks, sources);
 
         java.net.URL nedTemplate = getClass().getResource("tsn_netgraph.jinja");
         if (nedTemplate == null) {
@@ -499,50 +426,226 @@ public class OmnetConverter {
             throw new FileNotFoundException("omnetpp ini template not found");
         }
 
+        // Create the temporary simulation folder
+        File simulationFolder = createSimulationFolder(String.valueOf(sg.hashCode()));;
 
-        // Templating output starts here
-        Map<String, Object> ctx = new HashMap<>();
-        ctx.put("devices", devices);
-        ctx.put("connections", connections);
-        ctx.put("sinks", sinks);
-        ctx.put("sources", sources);
-
-        // todo: allow changing the max simulation time in seconds
-        ctx.put("max_time_s", DEFAULT_SIMULATION_TIME_LIMIT);
-
-        // Create a temporary todo: (permanent heh) output folder
-        String uniqueID = String.valueOf(sg.hashCode());
-        File temporaryFolder = createTempFolder(uniqueID);
-        if (temporaryFolder == null) {
-            throw new FileNotFoundException("temporary folder could not be created");
-        }
-
+        // Write the required simulation files.
         try {
-            // Write the network graph ned file
+            // Create the jinja context
+            Map<String, Object> ctx = new HashMap<>();
+            ctx.put("devices", devices);
+            ctx.put("connections", connections);
+            ctx.put("sinks", sinks);
+            ctx.put("sources", sources);
+            ctx.put("max_time_s", DEFAULT_SIMULATION_TIME_LIMIT);
+
             writeToFile(
-                Paths.get(temporaryFolder.getPath(), "package.ned"), 
-                jinJava.render(Files.readString(Paths.get(nedTemplate.toURI())), ctx)
+                    Paths.get(simulationFolder.getPath(), "package.ned"),
+                    jinJava.render(Files.readString(Paths.get(nedTemplate.getPath())), ctx)
             );
 
-            // Write the omnetpp.ini file
             writeToFile(
-                Paths.get(temporaryFolder.getPath(), "omnetpp.ini"),
-                jinJava.render(Files.readString(Paths.get(iniTemplate.toURI())), ctx)
+                    Paths.get(simulationFolder.getPath(), "omnetpp.ini"),
+                    jinJava.render(Files.readString(Paths.get(iniTemplate.getPath())), ctx)
             );
-        } catch (IOException ex) {
-
+        } catch (IOException e) {
+            throw new FileNotFoundException(e.getMessage());
         }
 
+        // Try to compile the simulation
+        if (!compileSimulation(simulationFolder)) {
+            return;
+        }
 
-        // Compile the simulation files
-        // todo: move this to its own function so we have a better api
-        compileSimulation(temporaryFolder);
-        runSimulation(temporaryFolder);
+        // If the simulation failed return, the function provides information
+        if (!runSimulation(simulationFolder)) {
+            return;
+        };
 
-        double e2e = ScaExtractor.getSimulationEndToEndDelay(Paths.get(temporaryFolder.getPath(), SCALAR_RESULT_FILE));
-        System.out.println("Simulation completed, e2e: " + e2e);
+        // Extract the simulation e2e delay from the result file
+        double sime2e = ScaExtractor.getSimulationEndToEndDelay(
+                Paths.get(simulationFolder.getPath(), SCALAR_RESULT_FILE)
+        );
+        System.out.println("omnet simulation completed: " + sime2e);
 
-        // todo: Save csv sc, ac, delay params
+        // Run the theoretical bound analysis for the flow of interest.
+        double bound = runPmooAnalysis(sg, flowOfInterest);
+        System.out.println("pmoo analysis completed: " + bound);
+
+        // Save the results in a csv file
+        try {
+            saveResults(sg, sime2e, bound, simulationFolder);
+        } catch (IOException ex) {
+            System.err.println(ex.getMessage());
+        }
+    }
+
+    /**
+     * Runs the PMOO analysis for a specific flow of interest in the server graph.
+     *
+     * @param sg              The server graph.
+     * @param flowOfInterest  The flow of interest.
+     * @return The delay bound obtained from the PMOO analysis.
+     */
+    private double runPmooAnalysis(ServerGraph sg, Flow flowOfInterest) {
+        CompFFApresets compffa_analyses = new CompFFApresets( sg );
+        PmooAnalysis pmoo = compffa_analyses.pmoo_analysis;
+
+        // Get the theoretical bound from the PMOO analysis
+        try {
+            pmoo.performAnalysis(flowOfInterest);
+        } catch (Exception e) {
+            System.err.println("PMOO analysis failed");
+            e.printStackTrace();
+            return Double.NaN;
+        }
+
+        return pmoo.getDelayBound().doubleValue();
+    }
+
+    /**
+     * Saves simulation results to a CSV file.
+     *
+     * @param sg                The server graph.
+     * @param sime2e            The end-to-end simulation delay.
+     * @param delayBound        The delay bound.
+     * @param simulationFolder  The folder where the simulation files are stored.
+     * @throws IOException if an I/O error occurs while saving the results.
+     */
+    private void saveResults(ServerGraph sg, double sime2e, double delayBound, File simulationFolder) throws IOException {
+        File csvFile = Path.of(simulationFolder.getPath(),"result.csv").toFile();
+        System.out.println("saving results to: " + csvFile.getPath());
+
+        // Format all double numbers
+        NumberFormat nf = NumberFormat.getInstance();
+        nf.setGroupingUsed(false);
+        nf.setMaximumFractionDigits(10);
+
+        String[][] outputData = {
+                // todo: dump values about the server graph, but in which format?
+                { nf.format(sime2e), nf.format(delayBound) },
+        };
+
+        FileWriter fileWriter = new FileWriter(csvFile);
+        // todo: Write a header line here?
+        for (String[] data : outputData) {
+            StringBuilder line = new StringBuilder();
+            for (int i = 0; i < data.length; i++) {
+                line.append(data[i]);
+                if (i != data.length - 1) {
+                    line.append(',');
+                }
+            }
+            line.append("\n");
+            fileWriter.write(line.toString());
+        }
+        fileWriter.close();
+    }
+
+    /**
+     * Registers switches in the server graph.
+     *
+     * @param sg       The server graph.
+     * @param devices  The list of devices to populate.
+     */
+    private void registerSwitches(ServerGraph sg, List<OmnetDevice> devices) {
+        for (final Server srv : sg.getServers()) {
+            if (srv.useMaxSC()) {
+                throw new RuntimeException("no idea how to support max service curves for now.");
+            }
+
+            ServiceCurve curve = srv.getServiceCurve();
+            devices.add(
+                    new OmnetDevice(
+                            getServerIdentifier(srv),
+                            SubmoduleTypes.TSN_SWITCH,
+                            // todo: does this make sense?
+                            // If the curve exists and has a limit apply it.
+                            curve != null ? (int) (curve.getUltAffineRate().doubleValue() + 0.5) : 0
+                    )
+            );
+        }
+    }
+
+    /**
+     * Creates OMNeT connections between servers in the server graph.
+     *
+     * @param sg           The server graph.
+     * @param connections  The list of connections to populate.
+     */
+    private void createConnections(ServerGraph sg, List<OmnetConnection> connections) {
+        for (Turn turn : sg.getTurns()) {
+            connections.add(
+                    new OmnetConnection(
+                            getServerIdentifier(turn.getSource()),
+                            getServerIdentifier(turn.getDest())
+                    )
+            );
+        }
+    }
+
+    /**
+     * Adds flows to the OMNeT simulation configuration.
+     *
+     * @param sg              The server graph.
+     * @param flowOfInterest  The flow of interest.
+     * @param devices         The list of devices to populate.
+     * @param connections     The list of connections to populate.
+     * @param sinks           The map of sinks to populate.
+     * @param sources         The map of sources to populate.
+     */
+    private void addFlows(ServerGraph sg, Flow flowOfInterest, List<OmnetDevice> devices,
+                          List<OmnetConnection> connections, Map<String, List<OmnetUDPSink>> sinks,
+                          Map<String, List<OmnetSource>> sources) {
+        for (Flow flow : sg.getFlows()) {
+            boolean isFoi = flow.equals(flowOfInterest);
+            LinkedList<Server> servers = flow.getServersOnPath();
+
+            String startFlowID = getFlowIdentifier(flow, true);
+            Server startServer = servers.getFirst();
+            devices.add(new OmnetDevice(startFlowID, SubmoduleTypes.TSN_DEVICE, 0));
+            connections.add(new OmnetConnection(
+                    startFlowID,
+                    getServerIdentifier(startServer)
+            ));
+
+            String endFlowID = getFlowIdentifier(flow, false);
+            Server endServer = servers.getLast();
+            devices.add(new OmnetDevice(endFlowID, SubmoduleTypes.TSN_DEVICE, 0));
+            connections.add(new OmnetConnection(
+                    endFlowID,
+                    getServerIdentifier(endServer)
+            ));
+
+            String monitorFlowID = "f" + flow.getId();
+            String srcID = monitorFlowID + "Source";
+            String sinkID = monitorFlowID + "Sink";
+
+            ArrivalCurve arrivalCurve = flow.getArrivalCurve();
+
+            // fixme: this might be too static for certain network topologies
+            int currentAppPort = 1000;
+            OmnetSource src = new OmnetSource(
+                    srcID,
+                    new OmnetSourceDestination(endFlowID, currentAppPort),
+                    monitorFlowID,
+                    getUDPBurstValueFromRaw(arrivalCurve.getBurst().doubleValue()),
+                    calculateProductionInterval(
+                            MAX_UDP_MSG_SIZE,
+                            (int) (arrivalCurve.getUltAffineRate().doubleValue() + 0.5)
+                    ),
+                    isFoi
+            );
+
+            List<OmnetSource> sourceList = sources.getOrDefault(startFlowID, new LinkedList<>());
+            sourceList.add(src);
+            sources.put(startFlowID, sourceList);
+
+            OmnetUDPSink sink = new OmnetUDPSink(sinkID, monitorFlowID, currentAppPort, isFoi);
+            List<OmnetUDPSink> appList = sinks.getOrDefault(endFlowID, new LinkedList<>());
+            appList.add(sink);
+            sinks.put(endFlowID, appList);
+        }
     }
 
     /**

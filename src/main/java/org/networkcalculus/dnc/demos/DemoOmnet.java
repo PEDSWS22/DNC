@@ -109,23 +109,8 @@ public class DemoOmnet {
         Flow f1 = sg.addFlow(arrival_curve, path1);
 
         // Test conversion
-        OmnetConverter omc = new OmnetConverter("/home/martb/Dokumente/OMNET/DNC/inet4.5/");
-        omc.convert(sg, f0);
+        OmnetConverter omc = new OmnetConverter("/home/martb/Documents/work/peds/omnetpp-6.0.1/samples/inet4.5/");
+        omc.simulate(sg, f0);
         // omc.setUnit.... mbps/bps
-
-        CompFFApresets compffa_analyses = new CompFFApresets( sg );
-        PmooAnalysis pmoo = compffa_analyses.pmoo_analysis;
-
-        // Analyze the server graph
-        // PMOO
-        System.out.println("--- PMOO Analysis ---");
-        try {
-            pmoo.performAnalysis(f0);
-            System.out.println("delay bound     : " + pmoo.getDelayBound());
-        } catch (Exception e) {
-            System.out.println("PMOO analysis failed");
-            e.printStackTrace();
-        }
-
     }
 }

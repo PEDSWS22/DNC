@@ -15,9 +15,9 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.text.NumberFormat;
 import java.util.*;
 import java.util.stream.Collectors;
+
 
 class OmnetConnection {
     private String src;
@@ -72,8 +72,7 @@ class OmnetDevice {
 
 enum SubmoduleTypes {
     TSN_DEVICE("TSNFlowMonitorDevice"),
-    TSN_SWITCH("TsnSwitch")
-    ;
+    TSN_SWITCH("TsnSwitch");
 
     private final String str;
 
@@ -198,10 +197,37 @@ class OmnetSource {
 /**
  * Usage of this converter requires the following pre-conditions:
  * (0) A system with a working "make" setup installed. (If you built omnet from source this is already taken care of)
- * (1) A installation of Omnet in the system path, e.g you should be able to run opp_makemake without specifying a path
- * (2) A valid path to the compiled version of the inet framework
+ * (1) A installation of Omnet in the system path, e.g. you should be able to run opp_makemake without specifying a path
+ * (2) A valid path to the compiled version of the inet framework, must be a release version
  */
 public class OmnetConverter {
+    public static class SimResult {
+        /** The end-to-end delay obtained from the simulation. */
+        double e2e;
+
+        public double getE2E() {
+            return e2e;
+        }
+
+        public double getBound() {
+            return bound;
+        }
+
+        /** The delay bound associated with the simulation result. */
+        double bound;
+
+        /**
+         * Constructs a SimResult object with the provided end-to-end delay and bound values.
+         *
+         * @param e2e   The end-to-end delay value obtained from the simulation.
+         * @param bound The delay bound associated with the simulation result.
+         */
+        SimResult(double e2e, double bound) {
+            this.e2e = e2e;
+            this.bound = bound;
+        }
+    }
+
     public static final long MAX_MTU_BYTES = 1500;
     public static long MAX_UDP_MSG_SIZE = accountForUDPOverhead(MAX_MTU_BYTES);
 
@@ -213,7 +239,7 @@ public class OmnetConverter {
     public static final String SIMULATION_NAME_PREFIX = "omnet-";
     public static final String SCALAR_RESULT_FILE = "data.sca";
 
-
+    public static final String CSV_RESULT_FILE = "result.csv";
 
     /**
      * The JinJava templating engine instance
@@ -221,10 +247,15 @@ public class OmnetConverter {
     Jinjava jinJava;
 
     // Path to the inet installation, required for compiling and executing the simulation
-    Path pathToInet;
+    Path inetPath;
 
     // Show the simulation output by default
     boolean showSimulationOutput = true;
+
+
+    // todo: make this configurable using a setter mechanism
+    private final OMCSVHelper.SupportedFlowProps[] desiredCSVFlowProperties = OMCSVHelper.DEFAULT_FLOW_PROPS;
+    private final OMCSVHelper.SupportedServerProps[] desiredCSVServerProperties = OMCSVHelper.DEFAULT_SERVER_PROPS;
 
     /**
      * Retrieves the identifier for a server.
@@ -239,7 +270,7 @@ public class OmnetConverter {
     /**
      * Retrieves the identifier for a flow, indicating whether it is the start or end of the flow.
      *
-     * @param flow The flow object for which to retrieve the identifier.
+     * @param flow    The flow object for which to retrieve the identifier.
      * @param isStart Determines whether the identifier is for the start or end of the flow.
      * @return The identifier string for the flow.
      */
@@ -260,24 +291,23 @@ public class OmnetConverter {
 
     /**
      * Creates a new instance of the OmnetConverter
-     * @param inetPath the path to a **compiled** version of the inet framework.
+     *
+     * @param inetPath the path to a **compiled (release mode)** version of the inet framework.
      */
     public OmnetConverter(String inetPath) {
-        JinjavaConfig conf = JinjavaConfig.newBuilder()
-        .withLstripBlocks(true)
-        .withTrimBlocks(true)
-        .build();
-
-        this.jinJava = new Jinjava(conf);
-        this.pathToInet = Paths.get(inetPath);
+        this.jinJava = new Jinjava(JinjavaConfig.newBuilder()
+                .withLstripBlocks(true)
+                .withTrimBlocks(true)
+                .build());
+        this.inetPath = Paths.get(inetPath);
     }
 
     /**
      * Creates a folder for the simulation using the specified UUID.
      *
      * @param uuid The UUID to be used for creating the folder.
-     * @throws IOException if the folders could not be created or if the target is an existing file
      * @return The created folder as a {@link File} object
+     * @throws IOException if the folders could not be created or if the target is an existing file
      */
     public static File createSimulationFolder(String uuid) throws IOException {
         Path folderPath = Paths.get(SIMULATION_TEMP_FOLDER, SIMULATION_NAME_PREFIX + uuid);
@@ -303,11 +333,11 @@ public class OmnetConverter {
      */
     public boolean compileSimulation(File workingDirectory) {
         // First run the makefile generation
-        if (!runCommand(new String[] {
+        if (!runCommand(new String[]{
                 "opp_makemake",
                 "-f", "--deep",
                 // Define the inet makefile variable that is used in a later step
-                String.format("-KINET_PROJ=%s", pathToInet),
+                String.format("-KINET_PROJ=%s", inetPath),
                 // Only link against the cmd version, keeps the dependencies small
                 "-u", "Cmdenv",
                 // Use a generic name
@@ -343,7 +373,7 @@ public class OmnetConverter {
                 "./" + SIMULATION_BINARY_NAME,
                 "-m", "-u", "Cmdenv",
                 // Define the inet src folder, so it finds the required NEDs
-                "-n", ".:" + pathToInet.resolve("src"),
+                "-n", ".:" + inetPath.resolve("src"),
                 "omnetpp.ini"
         }, workingDirectory, showSimulationOutput);
     }
@@ -352,9 +382,9 @@ public class OmnetConverter {
     /**
      * Executes a command with the specified arguments in the specified working directory.
      *
-     * @param cmd The command and its arguments to be executed.
+     * @param cmd              The command and its arguments to be executed.
      * @param workingDirectory The working directory where the command should be executed.
-     * @param withOutput Determines whether the command output should be displayed in the console.
+     * @param withOutput       Determines whether the command output should be displayed in the console.
      * @return True if the command executed successfully, false otherwise.
      */
     private boolean runCommand(String[] cmd, File workingDirectory, boolean withOutput) {
@@ -376,7 +406,6 @@ public class OmnetConverter {
             // Output what we are about to do
             System.out.println("Running command: " + Arrays.toString(cmd));
 
-            // todo: set up threaded streams to read stdout and redirect it to the console
             int exitCode = process.waitFor();
             if (exitCode != 0) {
                 System.err.println("Running a command failed \n"
@@ -396,12 +425,15 @@ public class OmnetConverter {
     /**
      * Simulates the network based on the given server graph and flow of interest.
      *
-     * @param sg              The server graph.
-     * @param flowOfInterest  The flow of interest.
-     * @throws IOException    if the required templates are not found or the temp folder could not be created.
+     * @param sg             The server graph.
+     * @param flowOfInterest The flow of interest.
+     * @param simTimeLimit   The simulation time limit
+     * @return The result of the simulation as SimResult
+     * @see SimResult
+     * @throws IOException                         if the required templates are not found or the temp folder could not be created.
      * @throws ScaExtractor.ValueNotFoundException if the result value is not found after the simulation.
      */
-    public void simulate(final ServerGraph sg, final Flow flowOfInterest) throws IOException, ScaExtractor.ValueNotFoundException {
+    public SimResult simulate(final ServerGraph sg, final Flow flowOfInterest, long simTimeLimit) throws IOException, ScaExtractor.ValueNotFoundException {
         List<OmnetDevice> devices = new LinkedList<>();
         List<OmnetConnection> connections = new LinkedList<>();
 
@@ -427,7 +459,7 @@ public class OmnetConverter {
         }
 
         // Create the temporary simulation folder
-        File simulationFolder = createSimulationFolder(String.valueOf(sg.hashCode()));;
+        File simulationFolder = createSimulationFolder(String.valueOf(sg.hashCode()));
 
         // Write the required simulation files.
         try {
@@ -437,7 +469,7 @@ public class OmnetConverter {
             ctx.put("connections", connections);
             ctx.put("sinks", sinks);
             ctx.put("sources", sources);
-            ctx.put("max_time_s", DEFAULT_SIMULATION_TIME_LIMIT);
+            ctx.put("max_time_s", simTimeLimit);
 
             writeToFile(
                     Paths.get(simulationFolder.getPath(), "package.ned"),
@@ -454,13 +486,13 @@ public class OmnetConverter {
 
         // Try to compile the simulation
         if (!compileSimulation(simulationFolder)) {
-            return;
+            return null;
         }
 
         // If the simulation failed return, the function provides information
         if (!runSimulation(simulationFolder)) {
-            return;
-        };
+            return null;
+        }
 
         // Extract the simulation e2e delay from the result file
         double sime2e = ScaExtractor.getSimulationEndToEndDelay(
@@ -472,23 +504,34 @@ public class OmnetConverter {
         double bound = runPmooAnalysis(sg, flowOfInterest);
         System.out.println("pmoo analysis completed: " + bound);
 
-        // Save the results in a csv file
+        // Save the results to a csv file
         try {
-            saveResults(sg, sime2e, bound, simulationFolder);
+            saveResults(sg, flowOfInterest, sime2e, bound, simulationFolder);
         } catch (IOException ex) {
             System.err.println(ex.getMessage());
         }
+
+        return new SimResult(sime2e, bound);
+    }
+
+    /**
+     * Simulate with the default time limit
+     *
+     * @see OmnetConverter#simulate(ServerGraph, Flow, long)
+     */
+    public SimResult simulate(final ServerGraph sg, final Flow flowOfInterest) throws IOException, ScaExtractor.ValueNotFoundException {
+        return simulate(sg, flowOfInterest, DEFAULT_SIMULATION_TIME_LIMIT);
     }
 
     /**
      * Runs the PMOO analysis for a specific flow of interest in the server graph.
      *
-     * @param sg              The server graph.
-     * @param flowOfInterest  The flow of interest.
+     * @param sg             The server graph.
+     * @param flowOfInterest The flow of interest.
      * @return The delay bound obtained from the PMOO analysis.
      */
     private double runPmooAnalysis(ServerGraph sg, Flow flowOfInterest) {
-        CompFFApresets compffa_analyses = new CompFFApresets( sg );
+        CompFFApresets compffa_analyses = new CompFFApresets(sg);
         PmooAnalysis pmoo = compffa_analyses.pmoo_analysis;
 
         // Get the theoretical bound from the PMOO analysis
@@ -505,48 +548,29 @@ public class OmnetConverter {
 
     /**
      * Saves simulation results to a CSV file.
+     * Format: `foi_id, omnet_e2e, pmoo_e2e, f_%d_{prop}, s_%d_{prop}`
+     * Where `%d` are the object ids and `{prop}` is one or more supported props for the object.
      *
-     * @param sg                The server graph.
-     * @param sime2e            The end-to-end simulation delay.
-     * @param delayBound        The delay bound.
-     * @param simulationFolder  The folder where the simulation files are stored.
+     * @param sg               The server graph.
+     * @param foi              The flow of interest
+     * @param sime2e           The end-to-end simulation delay.
+     * @param delayBound       The delay bound.
+     * @param simulationFolder The folder where the simulation files are stored.
      * @throws IOException if an I/O error occurs while saving the results.
      */
-    private void saveResults(ServerGraph sg, double sime2e, double delayBound, File simulationFolder) throws IOException {
-        File csvFile = Path.of(simulationFolder.getPath(),"result.csv").toFile();
-        System.out.println("saving results to: " + csvFile.getPath());
+    private void saveResults(ServerGraph sg, Flow foi, double sime2e, double delayBound, File simulationFolder) throws IOException {
+        File csvFile = Path.of(simulationFolder.getPath(), "result.csv").toFile();
+        System.out.println("saving results to: ./" + csvFile.getPath());
 
-        // Format all double numbers
-        NumberFormat nf = NumberFormat.getInstance();
-        nf.setGroupingUsed(false);
-        nf.setMaximumFractionDigits(10);
-
-        String[][] outputData = {
-                // todo: dump values about the server graph, but in which format?
-                { nf.format(sime2e), nf.format(delayBound) },
-        };
-
-        FileWriter fileWriter = new FileWriter(csvFile);
-        // todo: Write a header line here?
-        for (String[] data : outputData) {
-            StringBuilder line = new StringBuilder();
-            for (int i = 0; i < data.length; i++) {
-                line.append(data[i]);
-                if (i != data.length - 1) {
-                    line.append(',');
-                }
-            }
-            line.append("\n");
-            fileWriter.write(line.toString());
-        }
-        fileWriter.close();
+        // Save the csv file
+        OMCSVHelper.ToFile(csvFile, sg, foi, sime2e, delayBound, desiredCSVFlowProperties, desiredCSVServerProperties);
     }
 
     /**
      * Registers switches in the server graph.
      *
-     * @param sg       The server graph.
-     * @param devices  The list of devices to populate.
+     * @param sg      The server graph.
+     * @param devices The list of devices to populate.
      */
     private void registerSwitches(ServerGraph sg, List<OmnetDevice> devices) {
         for (final Server srv : sg.getServers()) {
@@ -570,8 +594,8 @@ public class OmnetConverter {
     /**
      * Creates OMNeT connections between servers in the server graph.
      *
-     * @param sg           The server graph.
-     * @param connections  The list of connections to populate.
+     * @param sg          The server graph.
+     * @param connections The list of connections to populate.
      */
     private void createConnections(ServerGraph sg, List<OmnetConnection> connections) {
         for (Turn turn : sg.getTurns()) {
@@ -587,12 +611,12 @@ public class OmnetConverter {
     /**
      * Adds flows to the OMNeT simulation configuration.
      *
-     * @param sg              The server graph.
-     * @param flowOfInterest  The flow of interest.
-     * @param devices         The list of devices to populate.
-     * @param connections     The list of connections to populate.
-     * @param sinks           The map of sinks to populate.
-     * @param sources         The map of sources to populate.
+     * @param sg             The server graph.
+     * @param flowOfInterest The flow of interest.
+     * @param devices        The list of devices to populate.
+     * @param connections    The list of connections to populate.
+     * @param sinks          The map of sinks to populate.
+     * @param sources        The map of sources to populate.
      */
     private void addFlows(ServerGraph sg, Flow flowOfInterest, List<OmnetDevice> devices,
                           List<OmnetConnection> connections, Map<String, List<OmnetUDPSink>> sinks,
@@ -652,7 +676,7 @@ public class OmnetConverter {
      * Writes the provided data to a file at the specified output path.
      *
      * @param outputPath The path where the file should be written.
-     * @param data The data to be written to the file.
+     * @param data       The data to be written to the file.
      * @throws IOException if an I/O error occurs while writing to the file.
      */
     private static void writeToFile(Path outputPath, String data) throws IOException {
@@ -666,7 +690,7 @@ public class OmnetConverter {
      * bandwidth (in bits per second) over a variable packet size.
      *
      * @param packetSizeBytes the packet size in bytes
-     * @param bandwidthBps   the desired bandwidth in bits per second
+     * @param bandwidthBps    the desired bandwidth in bits per second
      * @return the production interval in microseconds
      */
     public static double calculateProductionInterval(double packetSizeBytes, double bandwidthBps) {
@@ -676,7 +700,7 @@ public class OmnetConverter {
     public static long getUDPBurstValueFromRaw(double frameSizeBit) {
         // We assume the original intention was to send a burst of traffic with a maximum MTU of 1500
         // (0) we find out how many frames that would have been.
-        return (long)Math.ceil(((frameSizeBit / 8) / MAX_MTU_BYTES) * MAX_UDP_MSG_SIZE);
+        return (long) Math.ceil(((frameSizeBit / 8) / MAX_MTU_BYTES) * MAX_UDP_MSG_SIZE);
     }
 
     /**

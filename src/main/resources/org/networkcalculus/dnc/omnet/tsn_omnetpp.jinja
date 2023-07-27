@@ -26,7 +26,7 @@ output-scalar-file = "data.sca"
 {% for src in source %}
 {% set i = loop.index0 %}
 
-# Add an app that produces an initial udp burst
+# Add an app that produces an initial udp burst (max udp datagram size: 65535 - 8 Byte (Header)
 *.{{id}}.app[{{i}}].typename = UdpBasicApp
 *.{{id}}.app[{{i}}].messageLength = {{src.burstLength}}B
 # Start,stop and send interval are deliberately chosen to only send 1 message.

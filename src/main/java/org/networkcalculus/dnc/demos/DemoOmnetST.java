@@ -27,7 +27,6 @@
 package org.networkcalculus.dnc.demos;
 
 import org.networkcalculus.dnc.AnalysisConfig;
-import org.networkcalculus.dnc.CompFFApresets;
 import org.networkcalculus.dnc.curves.ArrivalCurve;
 import org.networkcalculus.dnc.curves.Curve;
 import org.networkcalculus.dnc.curves.ServiceCurve;
@@ -36,7 +35,6 @@ import org.networkcalculus.dnc.network.server_graph.Server;
 import org.networkcalculus.dnc.network.server_graph.ServerGraph;
 import org.networkcalculus.dnc.network.server_graph.Turn;
 import org.networkcalculus.dnc.omnet.OmnetConverter;
-import org.networkcalculus.dnc.tandem.analyses.PmooAnalysis;
 
 import java.util.LinkedList;
 
@@ -96,7 +94,7 @@ public class DemoOmnetST {
 
         // Test conversion
         OmnetConverter omc = new OmnetConverter("/home/martb/Documents/work/peds/omnetpp-6.0.1/samples/inet4.5/");
-        omc.simulate(sg, foi);
-        // omc.setUnit.... mbps/bps
+        OmnetConverter.SimResult res = omc.simulate(sg, foi);
+        System.out.printf("Simulation completed with e2e: %.4f, bound: %.4f\n", res.getE2E(), res.getBound());
     }
 }
